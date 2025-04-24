@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/flowchartsman/swaggerui"
+	"github.com/ruko1202/swaggerui"
 )
 
 //go:embed spec/petstore.yml
@@ -16,6 +16,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/pet/", petHandler)
 	mux.Handle("/swagger/", http.StripPrefix("/swagger", swaggerui.Handler(spec)))
-	log.Println("serving on :8080")
+	log.Println("serving on http://localhost:8080")
+	log.Println("swagger on http://localhost:8080/swagger")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
