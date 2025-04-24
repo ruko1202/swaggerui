@@ -3,6 +3,12 @@ Embedded, self-hosted [Swagger Ui](https://swagger.io/tools/swagger-ui/) for go 
 
 This module provides `swaggerui.Handler`, which you can use to serve an embedded copy of [Swagger UI](https://swagger.io/tools/swagger-ui/) as well as an embedded specification for your API.
 
+## Install
+
+```shell
+go get github.com/ruko1202/swaggerui
+```
+
 ## Example usage
 ```go
 package main
@@ -12,7 +18,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/flowchartsman/swaggerui"
+	"github.com/ruko1202/swaggerui"
 )
 
 //go:embed swagger.json
