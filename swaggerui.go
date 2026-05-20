@@ -14,7 +14,7 @@ var (
 	assetsDir = "assets"
 )
 
-// Handler returns a handler that will serve a self-hosted Swagger UI with your spec embedded
+// Handler returns a handler that will serve a self-hosted Swagger UI with your spec embedded.
 func Handler(spec []byte) http.Handler {
 	// render the index template with the proper spec name inserted
 	mux := http.NewServeMux()

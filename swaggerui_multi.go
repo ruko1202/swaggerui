@@ -145,7 +145,7 @@ func (s *specSet) swaggerInitializer() []byte {
 	if err := initializerTemplate.Execute(&b, data); err != nil {
 		log.Panicf("render initializer: %v", err)
 	}
-	return []byte(b.String())
+	return b.Bytes()
 }
 
 func mustJSON(v any, label string) string {

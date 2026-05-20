@@ -163,19 +163,19 @@ func TestHandlerWithSpecsPanicsOnInvalidConfig(t *testing.T) {
 	}
 }
 
-func get(t *testing.T, handler http.Handler, path string) (string, int) {
+func get(t *testing.T, handler http.Handler, path string) (body string, statusCode int) {
 	t.Helper()
 
-	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	resp := rec.Result()
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}
 
-	return string(body), resp.StatusCode
+	return string(bodyBytes), resp.StatusCode
 }
