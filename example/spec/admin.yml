@@ -1,0 +1,11 @@
+openapi: 3.1.0
+info:
+  title: Admin API
+  version: 1.0.0
+paths:
+  /admin/health:
+    get:
+      summary: Admin health check
+      responses:
+        '200':
+          description: OK
