@@ -1,149 +1,193 @@
-package swaggerui
+package swaggerui_test
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"regexp"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/ruko1202/swaggerui"
 )
 
-func TestHandlerServesSingleSpecAndAssets(t *testing.T) {
-	handler := Handler([]byte(`{"openapi":"3.1.0"}`))
+var (
+	initializerURLsPattern        = regexp.MustCompile(`(?m)^\s*urls:\s*(\[.*\]),$`)
+	initializerPrimaryNamePattern = regexp.MustCompile(`(?m)^\s*"urls\.primaryName":\s*(".*"),$`)
+)
 
-	body, status := get(t, handler, "/swagger_spec")
-	if status != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", status)
-	}
-	if body != `{"openapi":"3.1.0"}` {
-		t.Fatalf("unexpected spec body: %q", body)
+func TestHandler_ServesSingleSpecAndAssets(t *testing.T) {
+	t.Parallel()
+
+	handler := swaggerui.Handler([]byte(`{"openapi":"3.1.0"}`))
+
+	testCases := map[string]struct {
+		path       string
+		wantStatus int
+		wantBody   string
+	}{
+		"should_serve_embedded_spec_when_swagger_spec_is_requested": {
+			path:       "/swagger_spec",
+			wantStatus: http.StatusOK,
+			wantBody:   `{"openapi":"3.1.0"}`,
+		},
+		"should_serve_static_asset_when_asset_exists": {
+			path:       "/swagger-ui.css",
+			wantStatus: http.StatusOK,
+		},
 	}
 
-	_, status = get(t, handler, "/swagger-ui.css")
-	if status != http.StatusOK {
-		t.Fatalf("expected static asset status 200, got %d", status)
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			body, status := get(t, handler, tc.path)
+
+			require.Equal(t, tc.wantStatus, status)
+			if tc.wantBody != "" {
+				assert.Equal(t, tc.wantBody, body)
+			}
+		})
 	}
 }
 
-func TestHandlerWithSpecsServesEachSpec(t *testing.T) {
-	handler := HandlerWithSpecs([]Spec{
+func TestHandlerWithSpecs_ServesSpecsByGeneratedURL(t *testing.T) {
+	t.Parallel()
+
+	handler := swaggerui.HandlerWithSpecs([]swaggerui.Spec{
 		{Name: "Public API", Content: []byte(`{"openapi":"3.1.0","info":{"title":"public"}}`)},
 		{Name: "Admin API", Content: []byte(`{"openapi":"3.1.0","info":{"title":"admin"}}`)},
 		{Name: `Special / ? % " API`, Content: []byte(`{"openapi":"3.1.0","info":{"title":"special"}}`)},
 	})
 
-	body, status := get(t, handler, "/swagger/public_api.json")
-	if status != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", status)
-	}
-	if !strings.Contains(body, `"title":"public"`) {
-		t.Fatalf("unexpected first spec body: %q", body)
+	testCases := map[string]struct {
+		path         string
+		wantStatus   int
+		wantBodyPart string
+	}{
+		"should_serve_public_spec_when_public_api_slug_is_requested": {
+			path:         "/swagger/public_api.json",
+			wantStatus:   http.StatusOK,
+			wantBodyPart: `"title":"public"`,
+		},
+		"should_serve_admin_spec_when_admin_api_slug_is_requested": {
+			path:         "/swagger/admin_api.json",
+			wantStatus:   http.StatusOK,
+			wantBodyPart: `"title":"admin"`,
+		},
+		"should_serve_special_spec_when_url_contains_escaped_special_characters": {
+			path:         "/swagger/special_%2F_%3F_%25_%22_api.json",
+			wantStatus:   http.StatusOK,
+			wantBodyPart: `"title":"special"`,
+		},
+		"should_return_not_found_when_spec_does_not_exist": {
+			path:       "/swagger/missing_api.json",
+			wantStatus: http.StatusNotFound,
+		},
+		"should_return_not_found_when_json_extension_is_missing": {
+			path:       "/swagger/public_api",
+			wantStatus: http.StatusNotFound,
+		},
 	}
 
-	body, status = get(t, handler, "/swagger/admin_api.json")
-	if status != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", status)
-	}
-	if !strings.Contains(body, `"title":"admin"`) {
-		t.Fatalf("unexpected second spec body: %q", body)
-	}
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	body, status = get(t, handler, "/swagger/special_%2F_%3F_%25_%22_api.json")
-	if status != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", status)
-	}
-	if !strings.Contains(body, `"title":"special"`) {
-		t.Fatalf("unexpected special spec body: %q", body)
-	}
+			body, status := get(t, handler, tc.path)
 
-	_, status = get(t, handler, "/swagger/missing_api.json")
-	if status != http.StatusNotFound {
-		t.Fatalf("expected missing spec status 404, got %d", status)
-	}
-
-	_, status = get(t, handler, "/swagger/public_api")
-	if status != http.StatusNotFound {
-		t.Fatalf("expected spec without .json status 404, got %d", status)
+			require.Equal(t, tc.wantStatus, status, body)
+			if tc.wantBodyPart != "" {
+				assert.Contains(t, body, tc.wantBodyPart)
+			}
+		})
 	}
 }
 
-func TestHandlerWithSpecsInitializer(t *testing.T) {
-	handler := HandlerWithSpecs([]Spec{
+func TestHandlerWithSpecs_GeneratesInitializer(t *testing.T) {
+	t.Parallel()
+
+	handler := swaggerui.HandlerWithSpecs([]swaggerui.Spec{
 		{Name: `Public "API"`, Content: []byte(`public`)},
 		{Name: "Admin API", Content: []byte(`admin`)},
-	}, WithPrimaryName("Admin API"))
+	}, swaggerui.WithPrimaryName("Admin API"))
 
 	body, status := get(t, handler, "/swagger-initializer.js")
-	if status != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", status)
-	}
+	require.Equal(t, http.StatusOK, status)
 
-	want := []string{
-		`urls: [{"url":"./swagger/public_%22api%22.json","name":"Public \"API\""},{"url":"./swagger/admin_api.json","name":"Admin API"}]`,
-		`"urls.primaryName": "Admin API"`,
-		`SwaggerUIStandalonePreset`,
-		`SwaggerUIBundle.plugins.DownloadUrl`,
-		`layout: "StandaloneLayout"`,
+	config := parseInitializerConfig(t, body)
+
+	wantURLs := map[string]string{
+		`Public "API"`: "./swagger/public_%22api%22.json",
+		"Admin API":    "./swagger/admin_api.json",
 	}
-	for _, s := range want {
-		if !strings.Contains(body, s) {
-			t.Fatalf("initializer missing %q in:\n%s", s, body)
-		}
+	require.Len(t, config.URLs, len(wantURLs))
+	for _, got := range config.URLs {
+		wantURL, ok := wantURLs[got.Name]
+		require.True(t, ok, "unexpected spec in initializer: %#v", got)
+		assert.Equal(t, wantURL, got.URL, "spec name: %s", got.Name)
+	}
+	assert.Equal(t, "Admin API", config.PrimaryName)
+
+	for _, want := range []string{
+		"SwaggerUIStandalonePreset",
+		"SwaggerUIBundle.plugins.DownloadUrl",
+		`layout: "StandaloneLayout"`,
+	} {
+		assert.Contains(t, body, want)
 	}
 }
 
-func TestHandlerWithSpecsInitializerDefaultsToFirstSpec(t *testing.T) {
-	handler := HandlerWithSpecs([]Spec{
+func TestHandlerWithSpecs_DefaultsPrimaryNameToFirstSpec(t *testing.T) {
+	t.Parallel()
+
+	handler := swaggerui.HandlerWithSpecs([]swaggerui.Spec{
 		{Name: "Public API", Content: []byte(`public`)},
 		{Name: "Admin API", Content: []byte(`admin`)},
 	})
 
 	body, status := get(t, handler, "/swagger-initializer.js")
-	if status != http.StatusOK {
-		t.Fatalf("expected status 200, got %d", status)
-	}
+	require.Equal(t, http.StatusOK, status)
 
-	if !strings.Contains(body, `"urls.primaryName": "Public API"`) {
-		t.Fatalf("initializer should default to first spec in:\n%s", body)
-	}
+	config := parseInitializerConfig(t, body)
+	assert.Equal(t, "Public API", config.PrimaryName)
 }
 
-func TestHandlerWithSpecsPanicsOnInvalidConfig(t *testing.T) {
-	tests := []struct {
-		name string
-		fn   func()
+func TestHandlerWithSpecs_PanicsOnInvalidConfig(t *testing.T) {
+	t.Parallel()
+
+	testCases := map[string]struct {
+		fn func()
 	}{
-		{
-			name: "empty specs",
+		"should_panic_when_specs_are_empty": {
 			fn: func() {
-				HandlerWithSpecs(nil)
+				swaggerui.HandlerWithSpecs(nil)
 			},
 		},
-		{
-			name: "empty name",
+		"should_panic_when_spec_name_is_empty": {
 			fn: func() {
-				HandlerWithSpecs([]Spec{{Content: []byte("spec")}})
+				swaggerui.HandlerWithSpecs([]swaggerui.Spec{{Content: []byte("spec")}})
 			},
 		},
-		{
-			name: "empty content",
+		"should_panic_when_spec_content_is_empty": {
 			fn: func() {
-				HandlerWithSpecs([]Spec{{Name: "API"}})
+				swaggerui.HandlerWithSpecs([]swaggerui.Spec{{Name: "API"}})
 			},
 		},
-		{
-			name: "duplicate name",
+		"should_panic_when_spec_names_generate_same_url": {
 			fn: func() {
-				HandlerWithSpecs([]Spec{
+				swaggerui.HandlerWithSpecs([]swaggerui.Spec{
 					{Name: "API", Content: []byte("one")},
-					{Name: "API", Content: []byte("two")},
+					{Name: "api", Content: []byte("two")},
 				})
 			},
 		},
-		{
-			name: "duplicate slug",
+		"should_panic_when_distinct_names_generate_same_url": {
 			fn: func() {
-				HandlerWithSpecs([]Spec{
+				swaggerui.HandlerWithSpecs([]swaggerui.Spec{
 					{Name: "Public API", Content: []byte("one")},
 					{Name: "public_api", Content: []byte("two")},
 				})
@@ -151,15 +195,43 @@ func TestHandlerWithSpecsPanicsOnInvalidConfig(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			defer func() {
-				if recover() == nil {
-					t.Fatal("expected panic")
-				}
-			}()
-			tt.fn()
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Panics(t, tc.fn)
 		})
+	}
+}
+
+type initializerConfig struct {
+	URLs        []initializerURL
+	PrimaryName string
+}
+
+type initializerURL struct {
+	URL  string `json:"url"`
+	Name string `json:"name"`
+}
+
+func parseInitializerConfig(t *testing.T, body string) initializerConfig {
+	t.Helper()
+
+	urlsMatch := initializerURLsPattern.FindStringSubmatch(body)
+	require.Len(t, urlsMatch, 2, "initializer urls config not found in:\n%s", body)
+
+	var urls []initializerURL
+	require.NoError(t, json.Unmarshal([]byte(urlsMatch[1]), &urls))
+
+	primaryMatch := initializerPrimaryNamePattern.FindStringSubmatch(body)
+	require.Len(t, primaryMatch, 2, "initializer primary name config not found in:\n%s", body)
+
+	var primaryName string
+	require.NoError(t, json.Unmarshal([]byte(primaryMatch[1]), &primaryName))
+
+	return initializerConfig{
+		URLs:        urls,
+		PrimaryName: primaryName,
 	}
 }
 
@@ -173,9 +245,7 @@ func get(t *testing.T, handler http.Handler, path string) (body string, statusCo
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
+	require.NoError(t, err)
 
 	return string(bodyBytes), resp.StatusCode
 }
