@@ -16,7 +16,7 @@ bin-deps:
 lint:
 	$(GOBIN)/golangci-lint run
 
-.PHONY: tloc
-tloc:
+.PHONY: test
+test:
 	go test -p 2 -count 2 --race --coverpkg=./... --covermode=atomic -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | sed 's|github.com/ruko1202/swaggerui||' | sed -E 's/\t+/\t/g' | tee coverage.report
